@@ -6,6 +6,7 @@ export interface SvgOptions {
   width?: number;
   height?: number;
   resourceSpacing?: number;
+  levelSpacing?: number;
   resourceWidth?: number;
   resourceHeight?: number;
   fontSize?: number;
@@ -21,6 +22,7 @@ interface HierarchyNode {
   y?: number;
   width?: number;
   height?: number;
+  index?: number; // 同じレベル内でのインデックス
 }
 
 export class SvgGenerator {
@@ -29,6 +31,8 @@ export class SvgGenerator {
   private resourceTypeGroups: Map<string, Resource[]> = new Map();
   private hierarchy: HierarchyNode[] = [];
   private resourceNodeMap: Map<string, HierarchyNode> = new Map();
+  private levelNodes: Map<number, HierarchyNode[]> = new Map(); // レベルごとのノード
+  private maxLevel: number = 0;
   private iconPaths: { [key: string]: string } = {
     ec2: 'M32.14 14.953v10.094l8.746 5.046v-10.093zm-16.275 0L7.12 20v10.093l8.745-5.047zm8.137 0L15.257 20v10.093l8.745 5.047m0-20.187L15.257 20l8.745 5.047',
     vpc: 'M41 5h-6c-1.105 0-2 0.895-2 2v6c0 1.105 0.895 2 2 2h6c1.105 0 2-0.895 2-2v-6c0-1.105-0.895-2-2-2zM13 5h-6c-1.105 0-2 0.895-2 2v6c0 1.105 0.895 2 2 2h6c1.105 0 2-0.895 2-2v-6c0-1.105-0.895-2-2-2zM41 33h-6c-1.105 0-2 0.895-2 2v6c0 1.105 0.895 2 2 2h6c1.105 0 2-0.895 2-2v-6c0-1.105-0.895-2-2-2zM13 33h-6c-1.105 0-2 0.895-2 2v6c0 1.105 0.895 2 2 2h6c1.105 0 2-0.895 2-2v-6c0-1.105-0.895-2-2-2zM9 15v18M41 15v18M15 9h18M15 41h18',
@@ -68,38 +72,46 @@ export class SvgGenerator {
 
   constructor(options: SvgOptions = {}) {
     this.options = {
-      width: options.width || 1800,
-      height: options.height || 1400,
-      resourceSpacing: options.resourceSpacing || 180,
+      width: options.width || 1600,
+      height: options.height || 1200,
+      resourceSpacing: options.resourceSpacing || 150,
+      levelSpacing: options.levelSpacing || 200,
       resourceWidth: options.resourceWidth || 120,
-      resourceHeight: options.resourceHeight || 120,
+      resourceHeight: options.resourceHeight || 100,
       fontSize: options.fontSize || 14,
       padding: options.padding || 100
     };
   }
 
   generateSvg(resources: Resource[], connections: Connection[], outputPath: string): void {
-    const svg = newInstance()
-      .width(this.options.width)
-      .height(this.options.height);
-
     // リソースを種類ごとにグループ化
     this.groupResourcesByType(resources);
     
     // 階層構造の構築
     this.buildHierarchy(resources, connections);
     
-    // 階層的なレイアウトを計算
-    this.calculateHierarchicalLayout();
-
-    // コンテナリソースと背景を描画
-    this.drawContainers(svg);
+    // ツリーレイアウトの計算
+    this.calculateTreeLayout();
+    
+    // SVGの高さを計算
+    const svgHeight = Math.max(
+      this.options.height,
+      (this.maxLevel + 1) * this.options.levelSpacing + this.options.padding * 2
+    );
+    
+    // SVGインスタンスの作成
+    const svg = newInstance()
+      .width(this.options.width)
+      .height(svgHeight);
+    
+    // 親子接続線を描画
+    this.drawTreeConnections(svg);
     
     // リソースを描画
     this.drawResources(svg, resources);
-
-    // 接続線を描画
-    this.drawConnections(svg, connections);
+    
+    // 関連接続線を描画（belongs_to以外）
+    this.drawRelationConnections(svg, connections);
 
     // SVGをファイルに保存
     writeFileSync(outputPath, svg.render());
@@ -121,6 +133,8 @@ export class SvgGenerator {
   private buildHierarchy(resources: Resource[], connections: Connection[]): void {
     this.hierarchy = [];
     this.resourceNodeMap = new Map();
+    this.levelNodes = new Map();
+    this.maxLevel = 0;
     
     // 初期化：すべてのリソースをノードとして作成
     resources.forEach(resource => {
@@ -130,439 +144,128 @@ export class SvgGenerator {
         level: 0
       };
       this.resourceNodeMap.set(resource.id, node);
-      
-      // トップレベルのコンテナ（VPC）を階層の先頭に追加
-      if (resource.type === 'vpc') {
-        this.hierarchy.push(node);
-      }
     });
     
-    // 接続情報から親子関係を構築
+    // 親子関係を構築（belongs_to接続に基づく）
     connections.forEach(conn => {
       if (conn.type === 'belongs_to') {
         const childNode = this.resourceNodeMap.get(conn.source);
         const parentNode = this.resourceNodeMap.get(conn.target);
         
-        if (childNode && parentNode && this.containerTypes.includes(parentNode.resource.type)) {
+        if (childNode && parentNode) {
           // 親ノードの子に追加
           parentNode.children.push(childNode);
-          
-          // レベルを親のレベル+1に設定
-          childNode.level = parentNode.level + 1;
-          
-          // 階層のルートにまだ追加されていない非コンテナリソースを管理
-          if (!this.containerTypes.includes(childNode.resource.type) && 
-              !this.hierarchy.includes(childNode)) {
-            // 親がすでに階層に含まれている場合は追加しない
-            const hasParentInHierarchy = this.hierarchy.some(node => 
-              node.children.includes(childNode));
-            
-            if (!hasParentInHierarchy) {
-              this.hierarchy.push(childNode);
-            }
-          }
         }
       }
     });
     
-    // 孤立したリソース（親を持たないリソース）を階層に追加
-    resources.forEach(resource => {
-      const node = this.resourceNodeMap.get(resource.id);
+    // ルートノードの特定（親を持たないノード）
+    const rootNodes: HierarchyNode[] = [];
+    const childNodes = new Set<HierarchyNode>();
+    
+    // 子ノードを収集
+    this.resourceNodeMap.forEach(node => {
+      node.children.forEach(child => {
+        childNodes.add(child);
+      });
+    });
+    
+    // 親を持たないノードがルート
+    this.resourceNodeMap.forEach(node => {
+      if (!childNodes.has(node)) {
+        rootNodes.push(node);
+      }
+    });
+    
+    // ルートから始めて深さ優先でレベルを割り当て
+    this.assignLevels(rootNodes, 0);
+    
+    // ルートノードを階層の先頭に追加
+    this.hierarchy = rootNodes;
+  }
+  
+  // ノードとその子孫にレベルを割り当て
+  private assignLevels(nodes: HierarchyNode[], level: number): void {
+    // 現在のレベルのノードを登録
+    if (!this.levelNodes.has(level)) {
+      this.levelNodes.set(level, []);
+    }
+    
+    nodes.forEach(node => {
+      node.level = level;
+      this.levelNodes.get(level)?.push(node);
+      this.maxLevel = Math.max(this.maxLevel, level);
       
-      if (node && !this.hierarchy.includes(node) && 
-          !this.hierarchy.some(parent => this.isChildOf(node, parent))) {
-        this.hierarchy.push(node);
+      // 子ノードのレベルを設定
+      if (node.children.length > 0) {
+        this.assignLevels(node.children, level + 1);
       }
     });
   }
   
-  // あるノードが別のノードの子孫かどうかを再帰的にチェック
-  private isChildOf(node: HierarchyNode, potentialParent: HierarchyNode): boolean {
-    if (potentialParent.children.includes(node)) {
-      return true;
-    }
-    
-    for (const child of potentialParent.children) {
-      if (this.isChildOf(node, child)) {
-        return true;
-      }
-    }
-    
-    return false;
-  }
-  
-  // 階層的なレイアウトを計算
-  private calculateHierarchicalLayout(): void {
-    // 最初に全ノードのサイズを計算
-    this.preCalculateAllNodeSizes();
-    
-    const topLevelCount = this.hierarchy.length;
-    const availableWidth = this.options.width - (this.options.padding * 2);
-    const horizontalStep = availableWidth / (topLevelCount + 1);
-    
-    // 最初にトップレベルのリソースの位置を決定
-    let totalTopLevelWidth = 0;
-    
-    // まずトップレベルノードの総幅を計算
-    for (let i = 0; i < topLevelCount; i++) {
-      const node = this.hierarchy[i];
-      if (node.width) {
-        totalTopLevelWidth += node.width;
-      }
-    }
-    
-    // 余白を追加
-    totalTopLevelWidth += (topLevelCount - 1) * this.options.resourceSpacing;
-    
-    // 開始X座標（左揃えではなく中央揃え）
-    let currentX = (this.options.width - totalTopLevelWidth) / 2;
-    const startY = this.options.padding * 2;
-    
-    // トップレベルノードを配置
-    for (let i = 0; i < topLevelCount; i++) {
-      const node = this.hierarchy[i];
-      const nodeWidth = node.width || this.options.resourceWidth;
+  // ツリーレイアウトを計算
+  private calculateTreeLayout(): void {
+    // 各レベルで横方向の配置を決定
+    for (let level = 0; level <= this.maxLevel; level++) {
+      const nodes = this.levelNodes.get(level) || [];
+      const nodesCount = nodes.length;
       
-      // ノードの中心X座標
-      const centerX = currentX + (nodeWidth / 2);
-      this.positionNodeWithChildren(node, centerX, startY);
+      if (nodesCount === 0) continue;
       
-      // 次のノードのX座標を更新
-      currentX += nodeWidth + this.options.resourceSpacing;
-    }
-    
-    // SVGの高さを再計算（必要に応じて拡張）
-    let maxHeight = 0;
-    this.hierarchy.forEach(node => {
-      if (node.y !== undefined && node.height !== undefined) {
-        const bottomY = node.y + node.height / 2;
-        maxHeight = Math.max(maxHeight, bottomY);
-      }
-    });
-    
-    // 余白を追加
-    maxHeight += this.options.padding * 2;
-    
-    // SVGの高さが足りない場合は拡張
-    if (maxHeight > this.options.height) {
-      this.options.height = maxHeight;
-    }
-    
-    // 座標情報をリソースマップに保存
-    this.saveCoordinates();
-  }
-  
-  // 全ノードのサイズを事前計算
-  private preCalculateAllNodeSizes(): void {
-    // ボトムアップでサイズを計算（子から親へ）
-    const calculateNodeSizeRecursive = (node: HierarchyNode): { width: number, height: number } => {
-      const isContainer = this.containerTypes.includes(node.resource.type);
+      // 同じレベルのノードを均等に配置
+      const levelWidth = this.options.width - this.options.padding * 2;
+      const spacing = nodesCount > 1 ? levelWidth / (nodesCount - 1) : 0;
       
-      // 基本サイズ
-      let nodeWidth = this.options.resourceWidth;
-      let nodeHeight = this.options.resourceHeight;
-      
-      // コンテナでない、または子がない場合は基本サイズを返す
-      if (!isContainer || node.children.length === 0) {
-        node.width = nodeWidth;
-        node.height = nodeHeight;
-        return { width: nodeWidth, height: nodeHeight };
-      }
-      
-      // 子要素のサイズを先に計算
-      const childSizes: { width: number, height: number }[] = [];
-      let totalChildWidth = 0;
-      let maxChildHeight = 0;
-      
-      for (const child of node.children) {
-        const size = calculateNodeSizeRecursive(child);
-        childSizes.push(size);
-        totalChildWidth += size.width;
-        maxChildHeight = Math.max(maxChildHeight, size.height);
-      }
-      
-      // 子要素間のスペースを追加
-      totalChildWidth += (node.children.length - 1) * this.options.resourceSpacing;
-      
-      // コンテナのヘッダー部分の高さ
-      const containerHeaderHeight = this.options.resourceHeight * 1.5;
-      
-      // コンテナのサイズを計算
-      const containerPadding = this.options.resourceSpacing;
-      nodeWidth = Math.max(this.options.resourceWidth * 3, totalChildWidth + containerPadding * 2);
-      nodeHeight = containerHeaderHeight + maxChildHeight + containerPadding * 2;
-      
-      // 幅の制約（親コンテナがある場合）
-      const maxWidth = this.options.width * 0.8;
-      if (nodeWidth > maxWidth) {
-        // 複数行レイアウトが必要な場合
-        const rowWidth = maxWidth - containerPadding * 2;
-        let rowHeight = 0;
-        let currentRowWidth = 0;
-        let rows = 1;
+      // 各ノードの位置を設定
+      nodes.forEach((node, index) => {
+        node.index = index;
         
-        for (let i = 0; i < childSizes.length; i++) {
-          const childSize = childSizes[i];
+        // 1つしかない場合は中央、複数ある場合は均等に配置
+        const x = nodesCount === 1 
+          ? this.options.width / 2 
+          : this.options.padding + index * spacing;
           
-          if (currentRowWidth + childSize.width > rowWidth && i > 0) {
-            // 次の行へ
-            currentRowWidth = childSize.width;
-            rows++;
-          } else {
-            currentRowWidth += childSize.width + this.options.resourceSpacing;
-          }
-          
-          rowHeight = Math.max(rowHeight, childSize.height);
-        }
+        const y = this.options.padding + level * this.options.levelSpacing;
         
-        // 複数行の場合の高さ計算
-        nodeHeight = containerHeaderHeight + (rowHeight * rows) + 
-                     ((rows - 1) * this.options.resourceSpacing) + 
-                     containerPadding * 2;
+        node.x = x;
+        node.y = y;
         
-        nodeWidth = maxWidth;
-      }
-      
-      node.width = nodeWidth;
-      node.height = nodeHeight;
-      return { width: nodeWidth, height: nodeHeight };
-    };
-    
-    // 各トップレベルノードのサイズを計算
-    for (const node of this.hierarchy) {
-      calculateNodeSizeRecursive(node);
-    }
-  }
-  
-  // ノードと子要素を再帰的に配置
-  private positionNodeWithChildren(node: HierarchyNode, x: number, y: number): void {
-    if (!node.width || !node.height) {
-      // サイズが計算されていない場合はデフォルト値を設定
-      node.width = this.options.resourceWidth;
-      node.height = this.options.resourceHeight;
-    }
-    
-    // ノード自体の位置を設定
-    node.x = x;
-    node.y = y;
-    
-    const isContainer = this.containerTypes.includes(node.resource.type);
-    if (!isContainer || node.children.length === 0) {
-      return; // 子要素がない場合は処理終了
-    }
-    
-    // コンテナのヘッダー部分の高さ
-    const containerHeaderHeight = this.options.resourceHeight * 1.5;
-    const containerPadding = this.options.resourceSpacing;
-    
-    // 子要素の総幅を計算
-    let totalChildWidth = 0;
-    for (const child of node.children) {
-      totalChildWidth += (child.width || this.options.resourceWidth);
-    }
-    
-    // 子要素間のスペースを追加
-    totalChildWidth += (node.children.length - 1) * this.options.resourceSpacing;
-    
-    // 子要素の開始位置（親の中央からオフセット）
-    let startX = x - (totalChildWidth / 2);
-    const startY = y + containerHeaderHeight;
-    
-    // 幅の制約を確認
-    const availableWidth = node.width - containerPadding * 2;
-    if (totalChildWidth > availableWidth) {
-      // 複数行レイアウトが必要
-      this.arrangeChildrenInRows(node, x, startY, availableWidth);
-    } else {
-      // 1行で収まる場合
-      let currentX = startX;
-      
-      for (const child of node.children) {
-        const childWidth = child.width || this.options.resourceWidth;
-        const childCenterX = currentX + (childWidth / 2);
-        
-        this.positionNodeWithChildren(child, childCenterX, startY);
-        
-        currentX += childWidth + this.options.resourceSpacing;
-      }
-    }
-  }
-  
-  // 子要素を複数行に配置
-  private arrangeChildrenInRows(
-    parentNode: HierarchyNode, 
-    parentCenterX: number, 
-    startY: number, 
-    availableWidth: number
-  ): void {
-    const rows: HierarchyNode[][] = [[]];
-    let currentRow = 0;
-    let currentRowWidth = 0;
-    
-    // 子要素を行に分割
-    for (const child of parentNode.children) {
-      const childWidth = child.width || this.options.resourceWidth;
-      
-      // 現在の行に収まらない場合、次の行へ
-      if (currentRowWidth + childWidth > availableWidth && rows[currentRow].length > 0) {
-        currentRow++;
-        rows[currentRow] = [];
-        currentRowWidth = 0;
-      }
-      
-      rows[currentRow].push(child);
-      currentRowWidth += childWidth + this.options.resourceSpacing;
-    }
-    
-    // 各行の子要素を配置
-    let currentY = startY;
-    
-    for (const row of rows) {
-      // 行の総幅を計算
-      let rowWidth = 0;
-      let maxHeight = 0;
-      
-      for (const child of row) {
-        rowWidth += (child.width || this.options.resourceWidth);
-        maxHeight = Math.max(maxHeight, child.height || this.options.resourceHeight);
-      }
-      
-      // 子要素間のスペースを追加
-      rowWidth += (row.length - 1) * this.options.resourceSpacing;
-      
-      // 行の開始X座標（親の中央からオフセット）
-      let currentX = parentCenterX - (rowWidth / 2);
-      
-      // 行内の各子要素を配置
-      for (const child of row) {
-        const childWidth = child.width || this.options.resourceWidth;
-        const childCenterX = currentX + (childWidth / 2);
-        
-        this.positionNodeWithChildren(child, childCenterX, currentY + (maxHeight / 2));
-        
-        currentX += childWidth + this.options.resourceSpacing;
-      }
-      
-      // 次の行のY座標を更新
-      currentY += maxHeight + this.options.resourceSpacing;
-    }
-  }
-  
-  // 計算した座標を座標マップに保存
-  private saveCoordinates(): void {
-    this.resourceCoordinates.clear();
-    
-    const processNode = (node: HierarchyNode) => {
-      if (node.x !== undefined && node.y !== undefined) {
-        this.resourceCoordinates.set(node.resource.id, { 
-          x: node.x, 
-          y: node.y 
-        });
-      }
-      
-      for (const child of node.children) {
-        processNode(child);
-      }
-    };
-    
-    for (const node of this.hierarchy) {
-      processNode(node);
-    }
-  }
-  
-  // コンテナリソース（VPC、サブネットなど）を描画
-  private drawContainers(svg: any): void {
-    // 階層の深いものから順に描画（子から親へ）
-    const containerNodes: HierarchyNode[] = [];
-    
-    const collectContainers = (node: HierarchyNode) => {
-      if (this.containerTypes.includes(node.resource.type) && node.children.length > 0) {
-        containerNodes.push(node);
-      }
-      
-      for (const child of node.children) {
-        collectContainers(child);
-      }
-    };
-    
-    for (const node of this.hierarchy) {
-      collectContainers(node);
-    }
-    
-    // レベルの深いものから描画（背景が重ならないように）
-    containerNodes.sort((a, b) => b.level - a.level);
-    
-    for (const node of containerNodes) {
-      if (node.x === undefined || node.y === undefined || 
-          node.width === undefined || node.height === undefined) {
-        continue;
-      }
-      
-      const resourceType = node.resource.type;
-      const color = this.colors[resourceType] || '#EEEEEE';
-      const x = node.x - node.width / 2;
-      const y = node.y - node.height / 2 + this.options.resourceHeight / 2;
-      
-      // コンテナの背景を描画
-      svg.rect({
-        x: x,
-        y: y,
-        width: node.width,
-        height: node.height,
-        rx: 15,
-        ry: 15,
-        fill: this.hexToRgba(color, 0.1),
-        stroke: color,
-        'stroke-width': '2',
-        'stroke-dasharray': '5,5'
+        // 座標をマップに保存
+        this.resourceCoordinates.set(node.resource.id, { x, y });
       });
+    }
+  }
+  
+  // ツリーの親子接続線を描画
+  private drawTreeConnections(svg: any): void {
+    // 各ノードから子ノードへの接続線を描画
+    this.resourceNodeMap.forEach(parentNode => {
+      if (parentNode.x === undefined || parentNode.y === undefined) return;
       
-      // コンテナのヘッダー部分を描画
-      svg.rect({
-        x: x,
-        y: y,
-        width: node.width,
-        height: this.options.resourceHeight,
-        rx: 15,
-        ry: 15,
-        fill: this.hexToRgba(color, 0.2),
-        stroke: 'none'
-      });
-      
-      // コンテナのアイコンを描画（ヘッダー内）
-      if (this.iconPaths[resourceType]) {
-        const iconSize = this.options.resourceHeight * 0.7;
-        svg.g({
-          transform: `translate(${x + 20}, ${y + (this.options.resourceHeight - iconSize) / 2}) scale(${iconSize / 48}, ${iconSize / 48})`
-        }).path({
-          d: this.iconPaths[resourceType],
-          stroke: color,
-          'stroke-width': '3',
+      parentNode.children.forEach(childNode => {
+        if (childNode.x === undefined || childNode.y === undefined) return;
+        
+        // 親から子への接続線
+        const startX = parentNode.x!;
+        const startY = parentNode.y! + this.options.resourceHeight / 2;
+        const endX = childNode.x!;
+        const endY = childNode.y! - this.options.resourceHeight / 2;
+        
+        // 接続線の中間点（ベジェ曲線用）
+        const midY = (startY + endY) / 2;
+        
+        // 曲線パスを描画
+        svg.path({
+          d: `M ${startX} ${startY} C ${startX} ${midY}, ${endX} ${midY}, ${endX} ${endY}`,
+          stroke: '#007BFF',
+          'stroke-width': '2',
           fill: 'none'
         });
-      }
-      
-      // コンテナの名前を表示（ヘッダー内）
-      svg.text({
-        x: x + 30 + this.options.resourceHeight * 0.7,
-        y: y + this.options.resourceHeight / 2 + 5,
-        'font-family': 'Arial',
-        'font-weight': 'bold',
-        'font-size': this.options.fontSize + 2,
-        'dominant-baseline': 'middle',
-        fill: color
-      }, `${node.resource.name} (${resourceType})`);
-    }
+      });
+    });
   }
   
-  // HEX色コードをRGBA形式に変換（透明度指定用）
-  private hexToRgba(hex: string, alpha: number): string {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-
+  // リソースを描画
   private drawResources(svg: any, resources: Resource[]): void {
     for (const resource of resources) {
       const coords = this.resourceCoordinates.get(resource.id);
@@ -572,145 +275,135 @@ export class SvgGenerator {
       const halfWidth = this.options.resourceWidth / 2;
       const halfHeight = this.options.resourceHeight / 2;
       
-      // コンテナリソースの場合、そのアイコンはdrawContainersで描画済みなのでスキップ
-      const isContainer = this.containerTypes.includes(resource.type);
-      const hasChildren = isContainer && 
-        this.resourceNodeMap.get(resource.id)?.children.length! > 0;
+      // リソースタイプに基づく色を取得
+      const color = this.colors[resource.type] || '#000000';
       
-      if (!hasChildren) {
-        // 非コンテナリソースまたは子を持たないコンテナリソースのアイコンを描画
-        if (this.iconPaths[resource.type]) {
-          const color = this.colors[resource.type] || '#000000';
-          
-          // アイコン背景を描画
-          svg.rect({
-            x: x - halfWidth,
-            y: y - halfHeight,
-            width: this.options.resourceWidth,
-            height: this.options.resourceHeight,
-            rx: 10,
-            ry: 10,
-            fill: this.hexToRgba(color, 0.1),
-            stroke: color,
-            'stroke-width': '1'
-          });
-          
-          // リソースのアイコンを中央に描画
-          const iconSize = Math.min(this.options.resourceWidth, this.options.resourceHeight) * 0.6;
-          const iconX = x - (iconSize / 2);
-          const iconY = y - (iconSize / 2);
-          
-          svg.g({
-            transform: `translate(${iconX}, ${iconY}) scale(${iconSize / 48}, ${iconSize / 48})`
-          }).path({
-            d: this.iconPaths[resource.type],
-            stroke: color,
-            'stroke-width': '2',
-            fill: 'none'
-          });
-          
-          // リソース名を描画
-          svg.text({
-            x: x,
-            y: y + halfHeight + 25,
-            'font-family': 'Arial',
-            'font-size': this.options.fontSize,
-            'text-anchor': 'middle',
-            'font-weight': 'bold',
-            fill: color
-          }, resource.name);
-        } else {
-          // リソースのアイコンがない場合は、矩形を描画
-          svg.rect({
-            x: x - halfWidth,
-            y: y - halfHeight,
-            width: this.options.resourceWidth,
-            height: this.options.resourceHeight,
-            rx: 10,
-            ry: 10,
-            fill: '#FFFFFF',
-            stroke: '#666666',
-            'stroke-width': '2'
-          });
-          
-          // リソース名を描画
-          svg.text({
-            x: x,
-            y: y + halfHeight + 25,
-            'font-family': 'Arial',
-            'font-size': this.options.fontSize,
-            'text-anchor': 'middle'
-          }, resource.name);
-        }
-      }
-    }
-  }
-
-  private drawConnections(svg: any, connections: Connection[]): void {
-    // 親子関係（belongs_to）以外の接続だけを描画
-    const nonHierarchyConnections = connections.filter(conn => 
-      conn.type !== 'belongs_to' || 
-      !this.isResourceChild(conn.source, conn.target));
-    
-    for (const connection of nonHierarchyConnections) {
-      const sourceCoords = this.resourceCoordinates.get(connection.source);
-      const targetCoords = this.resourceCoordinates.get(connection.target);
+      // リソースの背景を描画
+      svg.rect({
+        x: x - halfWidth,
+        y: y - halfHeight,
+        width: this.options.resourceWidth,
+        height: this.options.resourceHeight,
+        rx: 10,
+        ry: 10,
+        fill: this.hexToRgba(color, 0.1),
+        stroke: color,
+        'stroke-width': '2'
+      });
       
-      if (sourceCoords && targetCoords) {
-        // 接続線のカラー
-        let color = '#666666';
-        let strokeDasharray = '';
+      // リソースのアイコンを描画
+      if (this.iconPaths[resource.type]) {
+        // アイコンサイズの計算
+        const iconSize = Math.min(this.options.resourceWidth, this.options.resourceHeight) * 0.6;
+        const iconX = x - iconSize / 2;
+        const iconY = y - iconSize / 2;
         
-        switch (connection.type) {
-          case 'belongs_to':
-            color = '#007BFF';
-            break;
-          case 'uses':
-            color = '#28A745';
-            break;
-          case 'attached_to':
-            color = '#DC3545';
-            break;
-          default:
-            color = '#666666';
-            strokeDasharray = '5,5';
-        }
-        
-        // 接続線を描画
-        svg.path({
-          d: `M ${sourceCoords.x} ${sourceCoords.y} L ${targetCoords.x} ${targetCoords.y}`,
+        svg.g({
+          transform: `translate(${iconX}, ${iconY}) scale(${iconSize / 48}, ${iconSize / 48})`
+        }).path({
+          d: this.iconPaths[resource.type],
           stroke: color,
           'stroke-width': '2',
-          'stroke-dasharray': strokeDasharray,
           fill: 'none'
         });
-        
-        // 接続線の中間に接続タイプを描画
-        const midX = (sourceCoords.x + targetCoords.x) / 2;
-        const midY = (sourceCoords.y + targetCoords.y) / 2;
-        
-        svg.text({
-          x: midX,
-          y: midY,
-          'font-family': 'Arial',
-          'font-size': this.options.fontSize - 2,
-          'text-anchor': 'middle',
-          'background': 'white',
-          fill: color
-        }, connection.type);
       }
+      
+      // リソースのタイプと名前を表示
+      svg.text({
+        x: x,
+        y: y + halfHeight + 20,
+        'font-family': 'Arial',
+        'font-size': this.options.fontSize,
+        'text-anchor': 'middle',
+        'font-weight': 'bold',
+        fill: color
+      }, resource.name);
+      
+      svg.text({
+        x: x,
+        y: y + halfHeight + 40,
+        'font-family': 'Arial',
+        'font-size': this.options.fontSize - 2,
+        'text-anchor': 'middle',
+        fill: color
+      }, `(${resource.type})`);
     }
   }
   
-  // あるリソースが別のリソースの子かどうかを階層構造から判断
-  private isResourceChild(childId: string, parentId: string): boolean {
-    const childNode = this.resourceNodeMap.get(childId);
-    const parentNode = this.resourceNodeMap.get(parentId);
+  // 関連接続線を描画（belongs_to以外）
+  private drawRelationConnections(svg: any, connections: Connection[]): void {
+    // belongs_to以外の接続のみフィルタリング
+    const relationConnections = connections.filter(conn => conn.type !== 'belongs_to');
     
-    if (!childNode || !parentNode) {
-      return false;
+    for (const connection of relationConnections) {
+      const sourceCoords = this.resourceCoordinates.get(connection.source);
+      const targetCoords = this.resourceCoordinates.get(connection.target);
+      
+      if (!sourceCoords || !targetCoords) continue;
+      
+      // 接続タイプに基づく色を決定
+      let color = '#666666';
+      let strokeDasharray = '';
+      
+      switch (connection.type) {
+        case 'uses':
+          color = '#28A745';
+          break;
+        case 'attached_to':
+          color = '#DC3545';
+          break;
+        default:
+          color = '#666666';
+          strokeDasharray = '5,5';
+      }
+      
+      // 始点と終点
+      const startX = sourceCoords.x;
+      const startY = sourceCoords.y;
+      const endX = targetCoords.x;
+      const endY = targetCoords.y;
+      
+      // 点線または実線で接続
+      svg.path({
+        d: `M ${startX} ${startY} L ${endX} ${endY}`,
+        stroke: color,
+        'stroke-width': '1.5',
+        'stroke-dasharray': strokeDasharray,
+        fill: 'none'
+      });
+      
+      // 接続線の中間に接続タイプを表示
+      const midX = (startX + endX) / 2;
+      const midY = (startY + endY) / 2;
+      
+      // 背景付きテキスト
+      svg.rect({
+        x: midX - 40,
+        y: midY - 10,
+        width: 80,
+        height: 20,
+        rx: 5,
+        ry: 5,
+        fill: 'white',
+        stroke: 'none'
+      });
+      
+      svg.text({
+        x: midX,
+        y: midY + 5,
+        'font-family': 'Arial',
+        'font-size': this.options.fontSize - 2,
+        'text-anchor': 'middle',
+        fill: color
+      }, connection.type);
     }
-    
-    return this.isChildOf(childNode, parentNode);
+  }
+  
+  // HEX色コードをRGBA形式に変換（透明度指定用）
+  private hexToRgba(hex: string, alpha: number): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   }
 } 
