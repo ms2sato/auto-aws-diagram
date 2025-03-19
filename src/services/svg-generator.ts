@@ -93,16 +93,13 @@ export class SvgGenerator {
     // ツリーレイアウトの計算
     this.calculateTreeLayout();
     
-    // SVGの高さを計算
-    const svgHeight = Math.max(
-      this.options.height,
-      (this.maxLevel + 1) * this.options.levelSpacing + this.options.padding * 2
-    );
+    // すべてのリソースを配置した後で、実際に必要なSVGサイズを計算
+    const { width: canvasWidth, height: canvasHeight } = this.calculateRequiredCanvasSize();
     
     // SVGインスタンスの作成
     const svg = newInstance()
-      .width(this.options.width)
-      .height(svgHeight);
+      .width(canvasWidth)
+      .height(canvasHeight);
     
     // 親子接続線を描画
     this.drawTreeConnections(svg);
@@ -474,5 +471,53 @@ export class SvgGenerator {
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  // すべてのリソースを配置した後に、実際に必要なキャンバスサイズを計算
+  private calculateRequiredCanvasSize(): { width: number; height: number } {
+    // 初期値はオプションで指定されたサイズ
+    let maxWidth = this.options.width;
+    let maxHeight = this.options.height;
+    
+    // リソースの座標を確認し、必要な幅と高さを計算
+    this.resourceCoordinates.forEach((coords, resourceId) => {
+      const resource = this.resourceNodeMap.get(resourceId)?.resource;
+      if (!resource) return;
+      
+      // リソースタイプに基づくスペーシング係数を取得
+      const typeSpacingFactor = {
+        'vpc': 2.5,
+        'subnet': 3.6,
+        'securityGroup': 3.6,
+        'default': 1.8
+      }[resource.type] || 1.8;
+      
+      // リソースの実際の幅と高さを計算
+      const resourceWidth = this.options.resourceWidth * typeSpacingFactor;
+      const resourceHeight = this.options.resourceHeight;
+      
+      // テキストラベルのためのスペース（名前とタイプ表示用）
+      const textSpace = 50;
+      
+      // 各リソースが占める領域の右端と下端を計算
+      const rightEdge = coords.x + resourceWidth / 2 + this.options.padding;
+      const bottomEdge = coords.y + resourceHeight / 2 + textSpace + this.options.padding;
+      
+      // 最大値を更新
+      maxWidth = Math.max(maxWidth, rightEdge);
+      maxHeight = Math.max(maxHeight, bottomEdge);
+    });
+    
+    // 最小サイズを確保
+    maxWidth = Math.max(maxWidth, 800);
+    maxHeight = Math.max(maxHeight, 600);
+    
+    // パディングを追加
+    maxWidth += this.options.padding;
+    maxHeight += this.options.padding;
+    
+    console.log(`Calculated canvas size: ${maxWidth}x${maxHeight}`);
+    
+    return { width: maxWidth, height: maxHeight };
   }
 } 
