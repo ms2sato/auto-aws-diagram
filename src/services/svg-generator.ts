@@ -72,14 +72,14 @@ export class SvgGenerator {
 
   constructor(options: SvgOptions = {}) {
     this.options = {
-      width: options.width || 1800,
+      width: options.width || 2400,
       height: options.height || 1200,
-      resourceSpacing: options.resourceSpacing || 250,
+      resourceSpacing: options.resourceSpacing || 300,
       levelSpacing: options.levelSpacing || 200,
       resourceWidth: options.resourceWidth || 120,
       resourceHeight: options.resourceHeight || 100,
       fontSize: options.fontSize || 14,
-      padding: options.padding || 120
+      padding: options.padding || 150
     };
   }
 
@@ -272,9 +272,9 @@ export class SvgGenerator {
         // タイプごとに最小スペースを確保
         const typeSpacingFactor: {[key: string]: number} = {
           'vpc': 2.5,
-          'subnet': 1.8,
-          'securityGroup': 1.8,
-          'default': 1.5
+          'subnet': 3.6,
+          'securityGroup': 3.6,
+          'default': 1.8
         };
         
         // 総幅を計算（タイプに基づいて調整）
