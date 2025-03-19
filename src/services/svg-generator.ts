@@ -268,10 +268,10 @@ export class SvgGenerator {
         // 複数ある場合は、タイプに応じた間隔で均等に配置
         // タイプごとに最小スペースを確保
         const typeSpacingFactor: {[key: string]: number} = {
-          'vpc': 2.5,
-          'subnet': 3.6,
-          'securityGroup': 3.6,
-          'default': 1.8
+          'vpc': 3.0,
+          'subnet': 5.0,
+          'securityGroup': 5.0,
+          'default': 2.5
         };
         
         // 総幅を計算（タイプに基づいて調整）
@@ -486,11 +486,11 @@ export class SvgGenerator {
       
       // リソースタイプに基づくスペーシング係数を取得
       const typeSpacingFactor = {
-        'vpc': 2.5,
-        'subnet': 3.6,
-        'securityGroup': 3.6,
-        'default': 1.8
-      }[resource.type] || 1.8;
+        'vpc': 3.0,
+        'subnet': 5.0,
+        'securityGroup': 5.0,
+        'default': 2.5
+      }[resource.type] || 2.5;
       
       // リソースの実際の幅と高さを計算
       const resourceWidth = this.options.resourceWidth * typeSpacingFactor;
