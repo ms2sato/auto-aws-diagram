@@ -266,37 +266,44 @@ export class SvgGenerator {
         this.resourceCoordinates.set(node.resource.id, { x: node.x, y: node.y });
       } else {
         // 複数ある場合は、タイプに応じた間隔で均等に配置
-        // タイプごとに最小スペースを確保
+        // タイプごとにリソース間のスペースを調整するための係数
+        // 注意: 実際のリソースの幅を変更するのではなく、リソース間の間隔を調整するために使用
         const typeSpacingFactor: {[key: string]: number} = {
-          'vpc': 3.0,
-          'subnet': 5.0,
-          'securityGroup': 5.0,
-          'default': 2.5
+          'vpc': 3.0,    // VPCは標準の3倍のスペースを確保
+          'subnet': 8.0, // サブネットは標準の8倍のスペースを確保
+          'securityGroup': 8.0, // セキュリティグループも標準の8倍のスペースを確保
+          'default': 2.5 // その他のリソースは標準の2.5倍のスペースを確保
         };
         
-        // 総幅を計算（タイプに基づいて調整）
-        let totalWidth = 0;
+        // 各リソースが占めるスペース（各リソースの幅ではなく、配置に必要な総スペース）を計算
+        let totalSpace = 0;
         nodes.forEach(node => {
           const factor = typeSpacingFactor[node.resource.type] || typeSpacingFactor.default;
-          totalWidth += this.options.resourceWidth * factor;
+          // 各リソースの実際の幅（120px）に係数を掛けて、配置スペースを計算
+          totalSpace += this.options.resourceWidth * factor;
         });
         
-        // 均等なスペースを計算
-        const availableSpace = levelWidth - totalWidth;
+        // 利用可能なスペースを計算
+        const availableSpace = levelWidth - totalSpace;
+        // リソース間の均等な間隔を計算
         const spacing = availableSpace / (nodesCount + 1);
         
         // ノードを配置
         currentX = this.options.padding + spacing;
         nodes.forEach((node, index) => {
           const factor = typeSpacingFactor[node.resource.type] || typeSpacingFactor.default;
-          const width = this.options.resourceWidth * factor;
+          // このリソースに割り当てる配置スペース（実際の描画幅よりも大きい）
+          const allocatedSpace = this.options.resourceWidth * factor;
           
-          node.x = currentX + width / 2;
+          // リソースの中心位置を計算（スペースの中央に配置）
+          node.x = currentX + allocatedSpace / 2;
           node.y = this.options.padding + level * this.options.levelSpacing;
           
+          // 座標をマップに保存
           this.resourceCoordinates.set(node.resource.id, { x: node.x, y: node.y });
           
-          currentX += width + spacing;
+          // 次のリソースの開始位置を計算
+          currentX += allocatedSpace + spacing;
         });
       }
     }
@@ -333,13 +340,29 @@ export class SvgGenerator {
   
   // リソースを描画
   private drawResources(svg: any, resources: Resource[]): void {
+    // リソースタイプに応じたスペーシング係数の定義
+    const typeSpacingFactor: {[key: string]: number} = {
+      'vpc': 3.0,
+      'subnet': 8.0,
+      'securityGroup': 8.0,
+      'default': 2.5
+    };
+    
     for (const resource of resources) {
       const coords = this.resourceCoordinates.get(resource.id);
       if (!coords) continue;
       
       const { x, y } = coords;
-      const halfWidth = this.options.resourceWidth / 2;
-      const halfHeight = this.options.resourceHeight / 2;
+      
+      // リソースタイプに基づくスペーシング係数を取得
+      const factor = typeSpacingFactor[resource.type] || typeSpacingFactor.default;
+      
+      // 幅をスペーシング係数に基づいて調整
+      const resourceWidth = this.options.resourceWidth;
+      const resourceHeight = this.options.resourceHeight;
+      
+      const halfWidth = resourceWidth / 2;
+      const halfHeight = resourceHeight / 2;
       
       // リソースタイプに基づく色を取得
       const color = this.colors[resource.type] || '#000000';
@@ -348,8 +371,8 @@ export class SvgGenerator {
       svg.rect({
         x: x - halfWidth,
         y: y - halfHeight,
-        width: this.options.resourceWidth,
-        height: this.options.resourceHeight,
+        width: resourceWidth,
+        height: resourceHeight,
         rx: 10,
         ry: 10,
         fill: this.hexToRgba(color, 0.1),
@@ -360,7 +383,7 @@ export class SvgGenerator {
       // リソースのアイコンを描画
       if (this.iconPaths[resource.type]) {
         // アイコンサイズの計算
-        const iconSize = Math.min(this.options.resourceWidth, this.options.resourceHeight) * 0.6;
+        const iconSize = Math.min(resourceWidth, resourceHeight) * 0.6;
         const iconX = x - iconSize / 2;
         const iconY = y - iconSize / 2;
         
@@ -487,8 +510,8 @@ export class SvgGenerator {
       // リソースタイプに基づくスペーシング係数を取得
       const typeSpacingFactor = {
         'vpc': 3.0,
-        'subnet': 5.0,
-        'securityGroup': 5.0,
+        'subnet': 8.0,
+        'securityGroup': 8.0,
         'default': 2.5
       }[resource.type] || 2.5;
       
