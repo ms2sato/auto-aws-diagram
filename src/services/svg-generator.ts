@@ -248,13 +248,21 @@ export class SvgGenerator {
     // リソースタイプに応じたスペーシング係数の定義
     const typeSpacingFactor: {[key: string]: number} = {
       'vpc': 2.0,    // VPCは標準の2倍のスペースを確保
-      'subnet': 3.5, // サブネットは標準の3.5倍のスペースを確保
-      'securityGroup': 3.5, // セキュリティグループも標準の3.5倍のスペースを確保
+      'subnet': 1.5, // サブネットは標準の1.5倍のスペースを確保（3.5から縮小）
+      'securityGroup': 2.0, // セキュリティグループも標準の2倍のスペースを確保（3.5から縮小）
       'default': 1.5 // その他のリソースは標準の1.5倍のスペースを確保
     };
     
     // 固定の水平スペーシング
-    const horizontalSpacing = 40; // リソース間の水平スペーシング
+    const horizontalSpacing = 30; // リソース間の水平スペーシング（40から縮小）
+    
+    // 各タイプ別の追加水平スペーシング
+    const typeHorizontalSpacing: {[key: string]: number} = {
+      'vpc': 60,       // VPC間は広めのスペース
+      'subnet': 10,    // サブネット間は狭めのスペース
+      'securityGroup': 15,  // SG間も狭めのスペース
+      'default': 30    // デフォルトのスペーシング
+    };
     
     // 各レベルの最大幅を計算（リソース配置のための事前計算）
     const levelMaxWidths: number[] = [];
@@ -313,8 +321,11 @@ export class SvgGenerator {
           // 座標をマップに保存
           this.resourceCoordinates.set(node.resource.id, { x: node.x, y: node.y });
           
+          // リソースタイプに応じた水平スペーシングを取得
+          const spacing = typeHorizontalSpacing[node.resource.type] || horizontalSpacing;
+          
           // 次のリソースの開始位置を計算
-          currentX += allocatedSpace + horizontalSpacing;
+          currentX += allocatedSpace + spacing;
         });
       }
     }
@@ -353,10 +364,10 @@ export class SvgGenerator {
   private drawResources(svg: any, resources: Resource[]): void {
     // リソースタイプに応じたスペーシング係数の定義
     const typeSpacingFactor: {[key: string]: number} = {
-      'vpc': 3.0,
-      'subnet': 8.0,
-      'securityGroup': 8.0,
-      'default': 2.5
+      'vpc': 2.0,
+      'subnet': 1.5,
+      'securityGroup': 2.0,
+      'default': 1.5
     };
     
     for (const resource of resources) {
