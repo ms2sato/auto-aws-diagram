@@ -68,13 +68,13 @@ export class SvgGenerator {
 
   constructor(options: SvgOptions = {}) {
     this.options = {
-      width: options.width || 1600,
-      height: options.height || 1200,
-      resourceSpacing: options.resourceSpacing || 200,
+      width: options.width || 1800,
+      height: options.height || 1400,
+      resourceSpacing: options.resourceSpacing || 180,
       resourceWidth: options.resourceWidth || 120,
       resourceHeight: options.resourceHeight || 120,
       fontSize: options.fontSize || 14,
-      padding: options.padding || 80
+      padding: options.padding || 100
     };
   }
 
@@ -193,16 +193,42 @@ export class SvgGenerator {
   
   // 階層的なレイアウトを計算
   private calculateHierarchicalLayout(): void {
+    // 最初に全ノードのサイズを計算
+    this.preCalculateAllNodeSizes();
+    
     const topLevelCount = this.hierarchy.length;
-    const horizontalSpacing = this.options.width / (topLevelCount + 1);
+    const availableWidth = this.options.width - (this.options.padding * 2);
+    const horizontalStep = availableWidth / (topLevelCount + 1);
     
     // 最初にトップレベルのリソースの位置を決定
+    let totalTopLevelWidth = 0;
+    
+    // まずトップレベルノードの総幅を計算
     for (let i = 0; i < topLevelCount; i++) {
       const node = this.hierarchy[i];
-      const x = horizontalSpacing * (i + 1);
-      const y = this.options.padding * 2;
+      if (node.width) {
+        totalTopLevelWidth += node.width;
+      }
+    }
+    
+    // 余白を追加
+    totalTopLevelWidth += (topLevelCount - 1) * this.options.resourceSpacing;
+    
+    // 開始X座標（左揃えではなく中央揃え）
+    let currentX = (this.options.width - totalTopLevelWidth) / 2;
+    const startY = this.options.padding * 2;
+    
+    // トップレベルノードを配置
+    for (let i = 0; i < topLevelCount; i++) {
+      const node = this.hierarchy[i];
+      const nodeWidth = node.width || this.options.resourceWidth;
       
-      this.positionNode(node, x, y);
+      // ノードの中心X座標
+      const centerX = currentX + (nodeWidth / 2);
+      this.positionNodeWithChildren(node, centerX, startY);
+      
+      // 次のノードのX座標を更新
+      currentX += nodeWidth + this.options.resourceSpacing;
     }
     
     // SVGの高さを再計算（必要に応じて拡張）
@@ -226,154 +252,200 @@ export class SvgGenerator {
     this.saveCoordinates();
   }
   
-  // ノードとその子孫を再帰的に配置
-  private positionNode(node: HierarchyNode, x: number, y: number): { width: number, height: number } {
-    const resourceType = node.resource.type;
-    const isContainer = this.containerTypes.includes(resourceType);
-    let nodeWidth = this.options.resourceWidth;
-    let nodeHeight = this.options.resourceHeight;
-    
-    node.x = x;
-    node.y = y;
-    
-    // コンテナではない場合は単純に現在のサイズを返す
-    if (!isContainer || node.children.length === 0) {
+  // 全ノードのサイズを事前計算
+  private preCalculateAllNodeSizes(): void {
+    // ボトムアップでサイズを計算（子から親へ）
+    const calculateNodeSizeRecursive = (node: HierarchyNode): { width: number, height: number } => {
+      const isContainer = this.containerTypes.includes(node.resource.type);
+      
+      // 基本サイズ
+      let nodeWidth = this.options.resourceWidth;
+      let nodeHeight = this.options.resourceHeight;
+      
+      // コンテナでない、または子がない場合は基本サイズを返す
+      if (!isContainer || node.children.length === 0) {
+        node.width = nodeWidth;
+        node.height = nodeHeight;
+        return { width: nodeWidth, height: nodeHeight };
+      }
+      
+      // 子要素のサイズを先に計算
+      const childSizes: { width: number, height: number }[] = [];
+      let totalChildWidth = 0;
+      let maxChildHeight = 0;
+      
+      for (const child of node.children) {
+        const size = calculateNodeSizeRecursive(child);
+        childSizes.push(size);
+        totalChildWidth += size.width;
+        maxChildHeight = Math.max(maxChildHeight, size.height);
+      }
+      
+      // 子要素間のスペースを追加
+      totalChildWidth += (node.children.length - 1) * this.options.resourceSpacing;
+      
+      // コンテナのヘッダー部分の高さ
+      const containerHeaderHeight = this.options.resourceHeight * 1.5;
+      
+      // コンテナのサイズを計算
+      const containerPadding = this.options.resourceSpacing;
+      nodeWidth = Math.max(this.options.resourceWidth * 3, totalChildWidth + containerPadding * 2);
+      nodeHeight = containerHeaderHeight + maxChildHeight + containerPadding * 2;
+      
+      // 幅の制約（親コンテナがある場合）
+      const maxWidth = this.options.width * 0.8;
+      if (nodeWidth > maxWidth) {
+        // 複数行レイアウトが必要な場合
+        const rowWidth = maxWidth - containerPadding * 2;
+        let rowHeight = 0;
+        let currentRowWidth = 0;
+        let rows = 1;
+        
+        for (let i = 0; i < childSizes.length; i++) {
+          const childSize = childSizes[i];
+          
+          if (currentRowWidth + childSize.width > rowWidth && i > 0) {
+            // 次の行へ
+            currentRowWidth = childSize.width;
+            rows++;
+          } else {
+            currentRowWidth += childSize.width + this.options.resourceSpacing;
+          }
+          
+          rowHeight = Math.max(rowHeight, childSize.height);
+        }
+        
+        // 複数行の場合の高さ計算
+        nodeHeight = containerHeaderHeight + (rowHeight * rows) + 
+                     ((rows - 1) * this.options.resourceSpacing) + 
+                     containerPadding * 2;
+        
+        nodeWidth = maxWidth;
+      }
+      
       node.width = nodeWidth;
       node.height = nodeHeight;
       return { width: nodeWidth, height: nodeHeight };
+    };
+    
+    // 各トップレベルノードのサイズを計算
+    for (const node of this.hierarchy) {
+      calculateNodeSizeRecursive(node);
     }
-    
-    // 子要素を配置し、必要なサイズを計算
-    const childCount = node.children.length;
-    const childSpacingHorizontal = this.options.resourceSpacing;
-    const childSpacingVertical = this.options.resourceSpacing;
-    
-    // 子要素の総幅を計算（初期推定）
-    let estimatedChildrenWidth = childCount * (this.options.resourceWidth + childSpacingHorizontal);
-    
-    // コンテナの初期幅を設定（最低でも子要素の幅の合計以上）
-    nodeWidth = Math.max(this.options.resourceWidth * 2, estimatedChildrenWidth);
-    
-    // コンテナのヘッダー部分の高さ（アイコンとタイトル用）
-    const containerHeaderHeight = this.options.resourceHeight * 1.5;
-    
-    // 子要素を並べるための開始位置
-    let currentX = x - (estimatedChildrenWidth / 2) + (this.options.resourceWidth / 2);
-    let currentY = y + containerHeaderHeight;
-    
-    // 子要素を配置しながら実際のサイズを計算
-    let maxChildHeight = 0;
-    let actualChildrenWidth = 0;
-    let maxChildWidth = 0;
-    let rowStartX = currentX;
-    let rowCurrentX = currentX;
-    let rows = 1;
-    
-    // 子要素の配置パラメータを計算
-    const childPositions: Array<{ node: HierarchyNode, x: number, y: number }> = [];
-    
-    // まず子要素のサイズを計算
-    const childSizes: Array<{ node: HierarchyNode, width: number, height: number }> = [];
-    for (let i = 0; i < childCount; i++) {
-      const childNode = node.children[i];
-      // 一時的な位置で子ノードのサイズを取得
-      const childSize = this.calculateNodeSize(childNode);
-      childSizes.push({ node: childNode, width: childSize.width, height: childSize.height });
-      maxChildWidth = Math.max(maxChildWidth, childSize.width);
-    }
-    
-    // 幅の制約（コンテナの最大幅を親コンテナの幅の80%に制限）
-    const maxContainerWidth = this.options.width * 0.8;
-    
-    // 実際に子要素を配置
-    for (let i = 0; i < childCount; i++) {
-      const { node: childNode, width: childWidth, height: childHeight } = childSizes[i];
-      
-      // 行をはみ出す場合は次の行へ
-      if (rowCurrentX + childWidth / 2 > x + maxContainerWidth / 2 && i !== 0) {
-        rowCurrentX = rowStartX;
-        currentY += maxChildHeight + childSpacingVertical;
-        maxChildHeight = 0;
-        rows++;
-      }
-      
-      // 子要素の位置を保存
-      childPositions.push({ node: childNode, x: rowCurrentX + childWidth / 2, y: currentY + childHeight / 2 });
-      
-      // 行の最大高さを更新
-      maxChildHeight = Math.max(maxChildHeight, childHeight);
-      
-      // X座標を更新
-      rowCurrentX += childWidth + childSpacingHorizontal;
-      
-      // 実際の子要素の幅を更新
-      actualChildrenWidth = Math.max(actualChildrenWidth, rowCurrentX - rowStartX);
-    }
-    
-    // コンテナの最終サイズを計算
-    nodeWidth = Math.max(this.options.resourceWidth * 2, actualChildrenWidth + childSpacingHorizontal * 2);
-    nodeWidth = Math.min(nodeWidth, maxContainerWidth); // 最大幅を制限
-    
-    // コンテナの高さを計算（ヘッダー + 子要素の高さ * 行数）
-    nodeHeight = containerHeaderHeight + (maxChildHeight * rows) + (childSpacingVertical * (rows - 1)) + this.options.padding;
-    
-    // 子要素の位置を確定
-    for (const childPos of childPositions) {
-      // 子ノードを実際の位置で配置
-      this.positionNode(childPos.node, childPos.x, childPos.y);
-    }
-    
-    node.width = nodeWidth;
-    node.height = nodeHeight;
-    return { width: nodeWidth, height: nodeHeight };
   }
   
-  // ノードのサイズを計算（子ノードも含む）
-  private calculateNodeSize(node: HierarchyNode): { width: number, height: number } {
-    const resourceType = node.resource.type;
-    const isContainer = this.containerTypes.includes(resourceType);
-    
-    // コンテナではない場合は基本サイズを返す
-    if (!isContainer || node.children.length === 0) {
-      return { 
-        width: this.options.resourceWidth, 
-        height: this.options.resourceHeight 
-      };
+  // ノードと子要素を再帰的に配置
+  private positionNodeWithChildren(node: HierarchyNode, x: number, y: number): void {
+    if (!node.width || !node.height) {
+      // サイズが計算されていない場合はデフォルト値を設定
+      node.width = this.options.resourceWidth;
+      node.height = this.options.resourceHeight;
     }
     
-    // 子要素のサイズを計算
-    const childCount = node.children.length;
-    const childSpacingHorizontal = this.options.resourceSpacing;
-    const childSpacingVertical = this.options.resourceSpacing;
+    // ノード自体の位置を設定
+    node.x = x;
+    node.y = y;
+    
+    const isContainer = this.containerTypes.includes(node.resource.type);
+    if (!isContainer || node.children.length === 0) {
+      return; // 子要素がない場合は処理終了
+    }
     
     // コンテナのヘッダー部分の高さ
     const containerHeaderHeight = this.options.resourceHeight * 1.5;
+    const containerPadding = this.options.resourceSpacing;
     
-    // 子要素の総幅・高さを計算
+    // 子要素の総幅を計算
     let totalChildWidth = 0;
-    let maxChildHeight = 0;
-    
-    for (const childNode of node.children) {
-      const childSize = this.calculateNodeSize(childNode);
-      totalChildWidth += childSize.width + childSpacingHorizontal;
-      maxChildHeight = Math.max(maxChildHeight, childSize.height);
+    for (const child of node.children) {
+      totalChildWidth += (child.width || this.options.resourceWidth);
     }
     
-    // 最後のスペーシングを差し引く
-    if (childCount > 0) {
-      totalChildWidth -= childSpacingHorizontal;
+    // 子要素間のスペースを追加
+    totalChildWidth += (node.children.length - 1) * this.options.resourceSpacing;
+    
+    // 子要素の開始位置（親の中央からオフセット）
+    let startX = x - (totalChildWidth / 2);
+    const startY = y + containerHeaderHeight;
+    
+    // 幅の制約を確認
+    const availableWidth = node.width - containerPadding * 2;
+    if (totalChildWidth > availableWidth) {
+      // 複数行レイアウトが必要
+      this.arrangeChildrenInRows(node, x, startY, availableWidth);
+    } else {
+      // 1行で収まる場合
+      let currentX = startX;
+      
+      for (const child of node.children) {
+        const childWidth = child.width || this.options.resourceWidth;
+        const childCenterX = currentX + (childWidth / 2);
+        
+        this.positionNodeWithChildren(child, childCenterX, startY);
+        
+        currentX += childWidth + this.options.resourceSpacing;
+      }
+    }
+  }
+  
+  // 子要素を複数行に配置
+  private arrangeChildrenInRows(
+    parentNode: HierarchyNode, 
+    parentCenterX: number, 
+    startY: number, 
+    availableWidth: number
+  ): void {
+    const rows: HierarchyNode[][] = [[]];
+    let currentRow = 0;
+    let currentRowWidth = 0;
+    
+    // 子要素を行に分割
+    for (const child of parentNode.children) {
+      const childWidth = child.width || this.options.resourceWidth;
+      
+      // 現在の行に収まらない場合、次の行へ
+      if (currentRowWidth + childWidth > availableWidth && rows[currentRow].length > 0) {
+        currentRow++;
+        rows[currentRow] = [];
+        currentRowWidth = 0;
+      }
+      
+      rows[currentRow].push(child);
+      currentRowWidth += childWidth + this.options.resourceSpacing;
     }
     
-    // 行あたりの最大子要素数を計算（幅の制約を考慮）
-    const maxContainerWidth = this.options.width * 0.8;
-    let widthConstraint = Math.min(totalChildWidth, maxContainerWidth);
-    let rows = Math.ceil(totalChildWidth / widthConstraint);
+    // 各行の子要素を配置
+    let currentY = startY;
     
-    // コンテナのサイズを計算
-    const width = Math.max(this.options.resourceWidth * 2, widthConstraint);
-    const height = containerHeaderHeight + (maxChildHeight * rows) + (childSpacingVertical * (rows - 1)) + this.options.padding;
-    
-    return { width, height };
+    for (const row of rows) {
+      // 行の総幅を計算
+      let rowWidth = 0;
+      let maxHeight = 0;
+      
+      for (const child of row) {
+        rowWidth += (child.width || this.options.resourceWidth);
+        maxHeight = Math.max(maxHeight, child.height || this.options.resourceHeight);
+      }
+      
+      // 子要素間のスペースを追加
+      rowWidth += (row.length - 1) * this.options.resourceSpacing;
+      
+      // 行の開始X座標（親の中央からオフセット）
+      let currentX = parentCenterX - (rowWidth / 2);
+      
+      // 行内の各子要素を配置
+      for (const child of row) {
+        const childWidth = child.width || this.options.resourceWidth;
+        const childCenterX = currentX + (childWidth / 2);
+        
+        this.positionNodeWithChildren(child, childCenterX, currentY + (maxHeight / 2));
+        
+        currentX += childWidth + this.options.resourceSpacing;
+      }
+      
+      // 次の行のY座標を更新
+      currentY += maxHeight + this.options.resourceSpacing;
+    }
   }
   
   // 計算した座標を座標マップに保存
@@ -429,7 +501,7 @@ export class SvgGenerator {
       const resourceType = node.resource.type;
       const color = this.colors[resourceType] || '#EEEEEE';
       const x = node.x - node.width / 2;
-      const y = node.y - this.options.resourceHeight / 2;
+      const y = node.y - node.height / 2 + this.options.resourceHeight / 2;
       
       // コンテナの背景を描画
       svg.rect({
@@ -445,11 +517,23 @@ export class SvgGenerator {
         'stroke-dasharray': '5,5'
       });
       
-      // コンテナのアイコンを描画（左上）
+      // コンテナのヘッダー部分を描画
+      svg.rect({
+        x: x,
+        y: y,
+        width: node.width,
+        height: this.options.resourceHeight,
+        rx: 15,
+        ry: 15,
+        fill: this.hexToRgba(color, 0.2),
+        stroke: 'none'
+      });
+      
+      // コンテナのアイコンを描画（ヘッダー内）
       if (this.iconPaths[resourceType]) {
-        const iconSize = this.options.resourceWidth / 3;
+        const iconSize = this.options.resourceHeight * 0.7;
         svg.g({
-          transform: `translate(${x + 20}, ${y + 20}) scale(${iconSize / 48}, ${iconSize / 48})`
+          transform: `translate(${x + 20}, ${y + (this.options.resourceHeight - iconSize) / 2}) scale(${iconSize / 48}, ${iconSize / 48})`
         }).path({
           d: this.iconPaths[resourceType],
           stroke: color,
@@ -458,13 +542,14 @@ export class SvgGenerator {
         });
       }
       
-      // コンテナの名前を表示（左上）
+      // コンテナの名前を表示（ヘッダー内）
       svg.text({
-        x: x + 30 + this.options.resourceWidth / 3,
-        y: y + 30,
+        x: x + 30 + this.options.resourceHeight * 0.7,
+        y: y + this.options.resourceHeight / 2 + 5,
         'font-family': 'Arial',
         'font-weight': 'bold',
         'font-size': this.options.fontSize + 2,
+        'dominant-baseline': 'middle',
         fill: color
       }, `${node.resource.name} (${resourceType})`);
     }
@@ -510,9 +595,13 @@ export class SvgGenerator {
             'stroke-width': '1'
           });
           
-          // リソースのアイコンを描画
+          // リソースのアイコンを中央に描画
+          const iconSize = Math.min(this.options.resourceWidth, this.options.resourceHeight) * 0.6;
+          const iconX = x - (iconSize / 2);
+          const iconY = y - (iconSize / 2);
+          
           svg.g({
-            transform: `translate(${x - halfWidth + 10}, ${y - halfHeight + 10}) scale(${(this.options.resourceWidth - 20) / 48}, ${(this.options.resourceHeight - 20) / 48})`
+            transform: `translate(${iconX}, ${iconY}) scale(${iconSize / 48}, ${iconSize / 48})`
           }).path({
             d: this.iconPaths[resource.type],
             stroke: color,
