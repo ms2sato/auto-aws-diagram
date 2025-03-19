@@ -72,14 +72,14 @@ export class SvgGenerator {
 
   constructor(options: SvgOptions = {}) {
     this.options = {
-      width: options.width || 1600,
+      width: options.width || 1800,
       height: options.height || 1200,
-      resourceSpacing: options.resourceSpacing || 150,
+      resourceSpacing: options.resourceSpacing || 250,
       levelSpacing: options.levelSpacing || 200,
       resourceWidth: options.resourceWidth || 120,
       resourceHeight: options.resourceHeight || 100,
       fontSize: options.fontSize || 14,
-      padding: options.padding || 100
+      padding: options.padding || 120
     };
   }
 
@@ -205,6 +205,49 @@ export class SvgGenerator {
   
   // ツリーレイアウトを計算
   private calculateTreeLayout(): void {
+    // リソースタイプごとのグループ化（同じレベルでのタイプに基づくグループ化）
+    const organizeByTypeInLevel = () => {
+      // 各レベルでリソースタイプごとにグループ化
+      for (let level = 0; level <= this.maxLevel; level++) {
+        const nodes = this.levelNodes.get(level) || [];
+        
+        // リソースタイプごとに分類
+        const typeGroups = new Map<string, HierarchyNode[]>();
+        nodes.forEach(node => {
+          const type = node.resource.type;
+          if (!typeGroups.has(type)) {
+            typeGroups.set(type, []);
+          }
+          typeGroups.get(type)?.push(node);
+        });
+        
+        // タイプ順にソートして新しいノードリストを作成
+        const sortedNodes: HierarchyNode[] = [];
+        // 特定の順序でタイプを処理（VPCを先頭に、その後サブネット、その後他）
+        const typeOrder = ['vpc', 'subnet', 'securityGroup'];
+        
+        // 優先タイプを先にソート
+        typeOrder.forEach(type => {
+          const group = typeGroups.get(type);
+          if (group) {
+            sortedNodes.push(...group);
+            typeGroups.delete(type);
+          }
+        });
+        
+        // 残りのタイプを追加
+        typeGroups.forEach(group => {
+          sortedNodes.push(...group);
+        });
+        
+        // 更新されたノードリストをレベルに設定
+        this.levelNodes.set(level, sortedNodes);
+      }
+    };
+    
+    // タイプに基づいて整理
+    organizeByTypeInLevel();
+    
     // 各レベルで横方向の配置を決定
     for (let level = 0; level <= this.maxLevel; level++) {
       const nodes = this.levelNodes.get(level) || [];
@@ -214,25 +257,51 @@ export class SvgGenerator {
       
       // 同じレベルのノードを均等に配置
       const levelWidth = this.options.width - this.options.padding * 2;
-      const spacing = nodesCount > 1 ? levelWidth / (nodesCount - 1) : 0;
       
-      // 各ノードの位置を設定
-      nodes.forEach((node, index) => {
-        node.index = index;
+      // 各ノードのタイプに基づいて適切な間隔を設定
+      let currentX = this.options.padding;
+      
+      if (nodesCount === 1) {
+        // 1つしかない場合は中央に配置
+        const node = nodes[0];
+        node.x = this.options.width / 2;
+        node.y = this.options.padding + level * this.options.levelSpacing;
+        this.resourceCoordinates.set(node.resource.id, { x: node.x, y: node.y });
+      } else {
+        // 複数ある場合は、タイプに応じた間隔で均等に配置
+        // タイプごとに最小スペースを確保
+        const typeSpacingFactor: {[key: string]: number} = {
+          'vpc': 2.5,
+          'subnet': 1.8,
+          'securityGroup': 1.8,
+          'default': 1.5
+        };
         
-        // 1つしかない場合は中央、複数ある場合は均等に配置
-        const x = nodesCount === 1 
-          ? this.options.width / 2 
-          : this.options.padding + index * spacing;
+        // 総幅を計算（タイプに基づいて調整）
+        let totalWidth = 0;
+        nodes.forEach(node => {
+          const factor = typeSpacingFactor[node.resource.type] || typeSpacingFactor.default;
+          totalWidth += this.options.resourceWidth * factor;
+        });
+        
+        // 均等なスペースを計算
+        const availableSpace = levelWidth - totalWidth;
+        const spacing = availableSpace / (nodesCount + 1);
+        
+        // ノードを配置
+        currentX = this.options.padding + spacing;
+        nodes.forEach((node, index) => {
+          const factor = typeSpacingFactor[node.resource.type] || typeSpacingFactor.default;
+          const width = this.options.resourceWidth * factor;
           
-        const y = this.options.padding + level * this.options.levelSpacing;
-        
-        node.x = x;
-        node.y = y;
-        
-        // 座標をマップに保存
-        this.resourceCoordinates.set(node.resource.id, { x, y });
-      });
+          node.x = currentX + width / 2;
+          node.y = this.options.padding + level * this.options.levelSpacing;
+          
+          this.resourceCoordinates.set(node.resource.id, { x: node.x, y: node.y });
+          
+          currentX += width + spacing;
+        });
+      }
     }
   }
   
