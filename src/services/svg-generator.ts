@@ -245,6 +245,40 @@ export class SvgGenerator {
     // タイプに基づいて整理
     organizeByTypeInLevel();
     
+    // リソースタイプに応じたスペーシング係数の定義
+    const typeSpacingFactor: {[key: string]: number} = {
+      'vpc': 2.0,    // VPCは標準の2倍のスペースを確保
+      'subnet': 3.5, // サブネットは標準の3.5倍のスペースを確保
+      'securityGroup': 3.5, // セキュリティグループも標準の3.5倍のスペースを確保
+      'default': 1.5 // その他のリソースは標準の1.5倍のスペースを確保
+    };
+    
+    // 固定の水平スペーシング
+    const horizontalSpacing = 40; // リソース間の水平スペーシング
+    
+    // 各レベルの最大幅を計算（リソース配置のための事前計算）
+    const levelMaxWidths: number[] = [];
+    for (let level = 0; level <= this.maxLevel; level++) {
+      const nodes = this.levelNodes.get(level) || [];
+      
+      // このレベルのリソースが必要とする総スペースを計算
+      let totalLevelWidth = 0;
+      nodes.forEach(node => {
+        const factor = typeSpacingFactor[node.resource.type] || typeSpacingFactor.default;
+        totalLevelWidth += this.options.resourceWidth * factor;
+      });
+      
+      // リソース間のスペースを追加
+      if (nodes.length > 1) {
+        totalLevelWidth += (nodes.length - 1) * horizontalSpacing;
+      }
+      
+      levelMaxWidths[level] = totalLevelWidth;
+    }
+    
+    // 最大レベル幅を見つける
+    const maxLevelWidth = Math.max(...levelMaxWidths, 0);
+    
     // 各レベルで横方向の配置を決定
     for (let level = 0; level <= this.maxLevel; level++) {
       const nodes = this.levelNodes.get(level) || [];
@@ -252,11 +286,11 @@ export class SvgGenerator {
       
       if (nodesCount === 0) continue;
       
-      // 同じレベルのノードを均等に配置
-      const levelWidth = this.options.width - this.options.padding * 2;
+      // このレベルの総幅
+      const levelWidth = levelMaxWidths[level];
       
-      // 各ノードのタイプに基づいて適切な間隔を設定
-      let currentX = this.options.padding;
+      // 左側のオフセットを計算（中央揃え）
+      const leftOffset = (this.options.width - levelWidth) / 2;
       
       if (nodesCount === 1) {
         // 1つしかない場合は中央に配置
@@ -265,37 +299,14 @@ export class SvgGenerator {
         node.y = this.options.padding + level * this.options.levelSpacing;
         this.resourceCoordinates.set(node.resource.id, { x: node.x, y: node.y });
       } else {
-        // 複数ある場合は、タイプに応じた間隔で均等に配置
-        // タイプごとにリソース間のスペースを調整するための係数
-        // 注意: 実際のリソースの幅を変更するのではなく、リソース間の間隔を調整するために使用
-        const typeSpacingFactor: {[key: string]: number} = {
-          'vpc': 3.0,    // VPCは標準の3倍のスペースを確保
-          'subnet': 8.0, // サブネットは標準の8倍のスペースを確保
-          'securityGroup': 8.0, // セキュリティグループも標準の8倍のスペースを確保
-          'default': 2.5 // その他のリソースは標準の2.5倍のスペースを確保
-        };
+        // 複数ある場合は、左から順に配置
+        let currentX = Math.max(leftOffset, this.options.padding); // 左端からのオフセットを確保
         
-        // 各リソースが占めるスペース（各リソースの幅ではなく、配置に必要な総スペース）を計算
-        let totalSpace = 0;
         nodes.forEach(node => {
           const factor = typeSpacingFactor[node.resource.type] || typeSpacingFactor.default;
-          // 各リソースの実際の幅（120px）に係数を掛けて、配置スペースを計算
-          totalSpace += this.options.resourceWidth * factor;
-        });
-        
-        // 利用可能なスペースを計算
-        const availableSpace = levelWidth - totalSpace;
-        // リソース間の均等な間隔を計算
-        const spacing = availableSpace / (nodesCount + 1);
-        
-        // ノードを配置
-        currentX = this.options.padding + spacing;
-        nodes.forEach((node, index) => {
-          const factor = typeSpacingFactor[node.resource.type] || typeSpacingFactor.default;
-          // このリソースに割り当てる配置スペース（実際の描画幅よりも大きい）
           const allocatedSpace = this.options.resourceWidth * factor;
           
-          // リソースの中心位置を計算（スペースの中央に配置）
+          // リソースの中心位置を計算
           node.x = currentX + allocatedSpace / 2;
           node.y = this.options.padding + level * this.options.levelSpacing;
           
@@ -303,7 +314,7 @@ export class SvgGenerator {
           this.resourceCoordinates.set(node.resource.id, { x: node.x, y: node.y });
           
           // 次のリソースの開始位置を計算
-          currentX += allocatedSpace + spacing;
+          currentX += allocatedSpace + horizontalSpacing;
         });
       }
     }
@@ -501,35 +512,43 @@ export class SvgGenerator {
     // 初期値はオプションで指定されたサイズ
     let maxWidth = this.options.width;
     let maxHeight = this.options.height;
+    let minX = Infinity;
     
     // リソースの座標を確認し、必要な幅と高さを計算
     this.resourceCoordinates.forEach((coords, resourceId) => {
       const resource = this.resourceNodeMap.get(resourceId)?.resource;
       if (!resource) return;
       
-      // リソースタイプに基づくスペーシング係数を取得
-      const typeSpacingFactor = {
-        'vpc': 3.0,
-        'subnet': 8.0,
-        'securityGroup': 8.0,
-        'default': 2.5
-      }[resource.type] || 2.5;
-      
-      // リソースの実際の幅と高さを計算
-      const resourceWidth = this.options.resourceWidth * typeSpacingFactor;
+      // リソースの実際の幅
+      const resourceWidth = this.options.resourceWidth;
       const resourceHeight = this.options.resourceHeight;
       
       // テキストラベルのためのスペース（名前とタイプ表示用）
       const textSpace = 50;
       
-      // 各リソースが占める領域の右端と下端を計算
-      const rightEdge = coords.x + resourceWidth / 2 + this.options.padding;
-      const bottomEdge = coords.y + resourceHeight / 2 + textSpace + this.options.padding;
+      // 各リソースの左端、右端、下端を計算
+      const leftEdge = coords.x - resourceWidth / 2;
+      const rightEdge = coords.x + resourceWidth / 2;
+      const bottomEdge = coords.y + resourceHeight / 2 + textSpace;
       
-      // 最大値を更新
+      // 最小X座標と最大X座標、最大Y座標を更新
+      minX = Math.min(minX, leftEdge);
       maxWidth = Math.max(maxWidth, rightEdge);
       maxHeight = Math.max(maxHeight, bottomEdge);
     });
+    
+    // 最小X座標が0未満の場合（画面左にはみ出る場合）、オフセットを計算
+    const xOffset = minX < this.options.padding ? this.options.padding - minX : 0;
+    
+    // オフセットが必要な場合、すべてのリソースを右にシフト
+    if (xOffset > 0) {
+      this.resourceCoordinates.forEach((coords, resourceId) => {
+        coords.x += xOffset;
+        this.resourceCoordinates.set(resourceId, coords);
+      });
+      // 最大幅も更新
+      maxWidth += xOffset;
+    }
     
     // 最小サイズを確保
     maxWidth = Math.max(maxWidth, 800);
