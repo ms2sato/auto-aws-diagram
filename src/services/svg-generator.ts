@@ -249,7 +249,7 @@ export class SvgGenerator {
     const typeSpacingFactor: {[key: string]: number} = {
       'vpc': 2.0,    // VPCは標準の2倍のスペースを確保
       'subnet': 1.5, // サブネットは標準の1.5倍のスペースを確保（3.5から縮小）
-      'securityGroup': 2.0, // セキュリティグループも標準の2倍のスペースを確保（3.5から縮小）
+      'securityGroup': 1.5, // セキュリティグループもサブネットと同じ1.5倍に設定
       'default': 1.5 // その他のリソースは標準の1.5倍のスペースを確保
     };
     
@@ -260,7 +260,7 @@ export class SvgGenerator {
     const typeHorizontalSpacing: {[key: string]: number} = {
       'vpc': 60,       // VPC間は広めのスペース
       'subnet': 10,    // サブネット間は狭めのスペース
-      'securityGroup': 15,  // SG間も狭めのスペース
+      'securityGroup': 10,  // SG間もサブネットと同じスペース
       'default': 30    // デフォルトのスペーシング
     };
     
@@ -366,7 +366,7 @@ export class SvgGenerator {
     const typeSpacingFactor: {[key: string]: number} = {
       'vpc': 2.0,
       'subnet': 1.5,
-      'securityGroup': 2.0,
+      'securityGroup': 1.5,
       'default': 1.5
     };
     
