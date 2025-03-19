@@ -1,0 +1,29 @@
+{
+  "name": "auto-aws-diagram",
+  "version": "0.1.0",
+  "description": "AWS architecture diagram generator",
+  "main": "dist/index.js",
+  "bin": {
+    "auto-aws-diagram": "./dist/index.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ec2": "^3.0.0",
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/client-rds": "^3.0.0",
+    "@aws-sdk/client-lambda": "^3.0.0",
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/client-elastic-load-balancing-v2": "^3.0.0",
+    "@aws-sdk/credential-providers": "^3.0.0",
+    "commander": "^13.1.0",
+    "svg-builder": "^2.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "demo": "node dist/index.js demo"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  }
+}
