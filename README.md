@@ -13,7 +13,11 @@ AWS のアーキテクチャ図を自動生成する CLI ツールです。AWS �
 ## インストール
 
 ```bash
+# グローバルインストール
 npm install -g auto-aws-diagram
+
+# または、npxを使用して直接実行（インストール不要）
+npx auto-aws-diagram
 ```
 
 ## 使用方法
@@ -21,14 +25,21 @@ npm install -g auto-aws-diagram
 ### デモ図の生成
 
 ```bash
+# グローバルインストール後
 auto-aws-diagram demo
 # または
 auto-aws-diagram demo -o custom-output-filename.svg
+
+# npxを使用する場合
+npx auto-aws-diagram demo
+# または
+npx auto-aws-diagram demo -o custom-output-filename.svg
 ```
 
 ### 実際の AWS 環境からの図生成
 
 ```bash
+# グローバルインストール後
 # デフォルトのAWSプロファイルと us-east-1 リージョンを使用
 auto-aws-diagram generate
 
@@ -40,6 +51,12 @@ auto-aws-diagram generate -o my-architecture.svg
 
 # 特定のリソースタイプだけを含める
 auto-aws-diagram generate -t ec2,vpc,subnet,rds
+
+# npxを使用する場合
+npx auto-aws-diagram generate
+npx auto-aws-diagram generate -p my-profile -r ap-northeast-1
+npx auto-aws-diagram generate -o my-architecture.svg
+npx auto-aws-diagram generate -t ec2,vpc,subnet,rds
 ```
 
 ### オプション
@@ -110,7 +127,6 @@ TypeScript で作れますか
 
 （ここまでで一度動かせないところをデモとして完成した報告。コマンドが説明される）
 
-
 ```
 ツールを実行するまでの手順をやってみて
 ```
@@ -134,4 +150,3 @@ git にしてコミットよろ
 ```
 
 ここまでで最初のバージョンができて、最初のコミットまで。
-
